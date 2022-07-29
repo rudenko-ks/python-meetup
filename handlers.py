@@ -11,6 +11,7 @@ from telegram.ext import (
     Dispatcher,
 )
 
+from sql_queries import sql_get_speaker_by_lastname, sql_get_conference, sql_get_performances_time
 from menu_blocks import start_block, programs_block, performance_block
 from settings import WELCOME_MESSAGE, TELEGRAM_SPEAKER_CHAT_ID, REPLY_TO_THIS_MESSAGE, WRONG_REPLY
 
@@ -23,6 +24,7 @@ class ConversationPoints(Enum):
     PERFORMANCE_SPEAKERS = 5
     CHOOSE_PERFORMANCE_SPEAKER = 6
     QUESTION_FOR_SPEAKER = 7
+    SEND_QUESTION_TO_SPEAKER = 8
 
 
 def start(update: Update, context: CallbackContext) -> int:
@@ -134,9 +136,10 @@ def get_program_description(update: Update, context: CallbackContext) -> int:
 
 
 def question_for_speaker(update: Update, context: CallbackContext) -> int:
-    programs = [f'Программа №{program}' for program in range(1, 4)]
+    conferences = sql_get_conference()
+    programs = [" ".join(conference) for conference in conferences]
     programs.append("Главное меню")
-
+    
     update.message.reply_text(
         "Спикеру какой программы у вас есть вопрос?",
         reply_markup=ReplyKeyboardMarkup(
@@ -149,13 +152,16 @@ def question_for_speaker(update: Update, context: CallbackContext) -> int:
 
 
 def get_performance_times(update: Update, context: CallbackContext) -> int:
-    reply_keyboard = [["12:00", "14:00"]]
-    context.user_data["performance"] = update.message.text
-
+    context.user_data["conference"] = update.message.text
+    times = sql_get_performances_time(context.user_data["conference"])
+    reply_keyboard = [" ".join(time) for time in times]
+    reply_keyboard.append("Главное меню")
+    #reply_keyboard = [["12:00", "14:00"]]
+    
     update.message.reply_text(
         "Когда было выступление?",
          reply_markup=ReplyKeyboardMarkup(
-             keyboard=reply_keyboard,
+             keyboard=[reply_keyboard],
              one_time_keyboard=True,
              resize_keyboard=True
          )
@@ -165,11 +171,12 @@ def get_performance_times(update: Update, context: CallbackContext) -> int:
 
 def get_performance_speakers(update: Update, context: CallbackContext) -> int:
     context.user_data["time"] = update.message.text
-    speakers = [f"{speaker_number}. Выступающий #{speaker_number}\n" for speaker_number in range(1, 5)]
-    reply_keyboard = list(chunked(speakers, 1))
-    reply_keyboard.append(["Назад"])
+    #speakers = [f"{speaker_number}. Выступающий #{speaker_number}\n" for speaker_number in range(1, 5)]
+    #reply_keyboard = list(chunked(speakers, 1))
+    #reply_keyboard.append(["Назад"])
+    reply_keyboard = [["Руденко Кирилл"]]
     update.message.reply_text(
-        text=f"На программе {context.user_data['performance']} в "
+        text=f"На программе {context.user_data['conference']} в "
              f"{context.user_data['time']} выступали:\n\n",
         reply_markup=ReplyKeyboardMarkup(
              keyboard=reply_keyboard,
@@ -198,7 +205,8 @@ def question(update: Update, context: CallbackContext) -> int:
     update.message.reply_text(
         text=f"Задайте свой вопрос:"
     )
-    return ConversationHandler.END
+    return ConversationPoints.SEND_QUESTION_TO_SPEAKER.value
+    #return ConversationPoints.QUESTION_FOR_SPEAKER.value
 
 
 def cancel(update: Update, context: CallbackContext) -> int:
@@ -211,6 +219,9 @@ def cancel(update: Update, context: CallbackContext) -> int:
 
 
 def forward_to_speaker(update: Update, context: CallbackContext):
+    #context.user_data["speaker"] = update.message.text
+    context.user_data["speaker"] = "Руденко Кирилл"
+    TELEGRAM_SPEAKER_CHAT_ID = sql_get_speaker_by_lastname(context.user_data["speaker"])
     forwarded = update.message.forward(chat_id=TELEGRAM_SPEAKER_CHAT_ID)
     # For forwarded messages check sender of the original message
     # For users who have banned the link to their account in forwarded messages.
@@ -222,7 +233,7 @@ def forward_to_speaker(update: Update, context: CallbackContext):
             reply_to_message_id=forwarded.message_id,
             text=f'{update.message.from_user.id}\n{REPLY_TO_THIS_MESSAGE}'
         )
-
+    return ConversationHandler.END
 
 def forward_to_user(update: Update, context: CallbackContext):
     user_id = None
@@ -310,6 +321,12 @@ def setup_dispatcher(dispatcher) -> Dispatcher:
                     question
                 ),
             ],
+            ConversationPoints.SEND_QUESTION_TO_SPEAKER.value: [
+                MessageHandler(
+                    Filters.chat_type.private,
+                    forward_to_speaker
+                ),
+            ],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
@@ -317,5 +334,5 @@ def setup_dispatcher(dispatcher) -> Dispatcher:
     dispatcher.add_handler(conv_handler)
     #dispatcher.add_handler(CommandHandler('start', start))
     dispatcher.add_handler(MessageHandler(Filters.chat(TELEGRAM_SPEAKER_CHAT_ID) & Filters.reply, forward_to_user))
-    dispatcher.add_handler(MessageHandler(Filters.chat_type.private, forward_to_speaker))
+    #dispatcher.add_handler(MessageHandler(Filters.chat_type.private, forward_to_speaker))
     return dispatcher
